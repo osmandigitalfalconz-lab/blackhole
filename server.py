@@ -468,7 +468,17 @@ def api_download():
                     download_name=_clean_filename(title, "mp4"),
                     max_age=0,
                 )
-        out_tmpl = os.path.join(workdir, "file.%(ext)s")
+        # Some extractors (Snapchat) report a nonsense "extension" — a
+        # random token from the URL, e.g. 'IRZXSOY' — and yt-dlp then
+        # refuses to save the file ("extracted extension is unusual").
+        # Force a sane extension in the output name, and remux to real
+        # MP4 when ffmpeg is available so the file matches its name.
+        if kind == "audio" and _has_ffmpeg():
+            out_tmpl = os.path.join(workdir, "file.mp3")
+        elif kind == "video":
+            out_tmpl = os.path.join(workdir, "file.mp4")
+        else:
+            out_tmpl = os.path.join(workdir, "file.%(ext)s")
         cmd = YTDLP_CMD + [
             "-f", fmt,
             "--no-playlist",
@@ -486,6 +496,8 @@ def api_download():
             cmd += ["-x", "--audio-format", "mp3"]
         else:
             cmd += ["--merge-output-format", "mp4"]
+            if kind == "video" and _has_ffmpeg():
+                cmd += ["--remux-video", "mp4"]
         cmd.append(url)
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=DL_TIMEOUT_SECONDS
