@@ -121,6 +121,12 @@ def fetch_info(url):
         "skip_download": True,
         "socket_timeout": 25,
         "retries": 2,
+        # YouTube's web player bot-checks Vercel's datacenter IPs
+        # ("Sign in to confirm you're not a bot"), so try the Android
+        # player client first and fall back to web only if it fails.
+        "extractor_args": {
+            "youtube": {"player_client": ["android", "web"]},
+        },
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -272,6 +278,7 @@ def api_download():
             "--no-playlist",
             "--no-warnings",
             "--no-progress",
+            "--extractor-args", "youtube:player_client=android,web",
             "-o", out_tmpl,
         ]
         if kind == "audio":
