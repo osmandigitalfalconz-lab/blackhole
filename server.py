@@ -155,13 +155,41 @@ def _vimeo_fallback(url):
     if not m:
         return None
     vid = m.group(1)
-    req = urllib.request.Request(
-        f"https://player.vimeo.com/video/{vid}/config",
-        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-                 "Referer": f"https://vimeo.com/{vid}"},
-    )
-    with urllib.request.urlopen(req, timeout=25) as resp:
-        cfg = json.loads(resp.read().decode("utf-8", "replace"))
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    cfg = None
+    try:
+        req = urllib.request.Request(
+            f"https://player.vimeo.com/video/{vid}/config",
+            headers={"User-Agent": ua, "Referer": f"https://vimeo.com/{vid}"},
+        )
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            cfg = json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception:
+        cfg = None
+    if cfg is None:
+        # The config endpoint is IP-blocked on some hosts; the public
+        # video page embeds the same player config JSON in its HTML.
+        try:
+            req = urllib.request.Request(
+                f"https://vimeo.com/{vid}",
+                headers={"User-Agent": ua, "Accept": "text/html"},
+            )
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                html = resp.read().decode("utf-8", "replace")
+            idx = html.find('"progressive":')
+            if idx >= 0:
+                start = html.find("[", idx)
+                arr, _ = json.JSONDecoder().raw_decode(html[start:])
+                title_m = re.search(r'"title":\s*"([^"]+)"', html)
+                cfg = {
+                    "request": {"files": {"progressive": arr}},
+                    "video": {"title": title_m.group(1) if title_m else f"Vimeo {vid}",
+                            "owner": {}, "duration": None, "thumbs": {}},
+                }
+        except Exception:
+            cfg = None
+    if not cfg:
+        return None
     files = (cfg.get("request") or {}).get("files") or {}
     progressive = files.get("progressive") or []
     if not progressive:
@@ -239,11 +267,12 @@ def fetch_info(url):
         "socket_timeout": 30,
         "retries": 3,
         "fragment_retries": 3,
-        # YouTube's web player bot-checks Vercel's datacenter IPs
-        # ("Sign in to confirm you're not a bot"), so try the app/TV
-        # player clients first and fall back to web only if they fail.
+        # YouTube: try the web player first — on a host whose IP is not
+        # bot-checked it returns the full quality ladder (up to 4K).
+        # Fall back to the app/TV clients (android etc.) when web is
+        # blocked; they return fewer formats but still download.
         "extractor_args": {
-            "youtube": {"player_client": ["android", "ios", "tv_embedded", "web"]},
+            "youtube": {"player_client": ["web", "android", "ios", "tv_embedded"]},
         },
     }
     try:
@@ -445,7 +474,7 @@ def api_download():
             "--no-playlist",
             "--no-warnings",
             "--no-progress",
-            "--extractor-args", "youtube:player_client=android,ios,tv_embedded,web",
+            "--extractor-args", "youtube:player_client=web,android,ios,tv_embedded",
             "-o", out_tmpl,
         ]
         ffloc = _ffmpeg_location()
