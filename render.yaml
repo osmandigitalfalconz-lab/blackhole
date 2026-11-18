@@ -1,0 +1,13 @@
+# Render Blueprint — one-click deploy of BlackHole.
+# Click "Deploy to Render" or connect this repo in the Render dashboard;
+# it builds the Dockerfile (Python + ffmpeg) and serves the whole app
+# (frontend + /api) as one web service.
+services:
+  - type: web
+    name: blackhole
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
