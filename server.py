@@ -228,7 +228,10 @@ def api_info():
             msg = "This link is not from a supported site."
         else:
             msg = "Could not fetch this link. It may be private, removed or rate-limited."
-        return jsonify({"error": msg}), 502
+        # `detail` carries the real extractor error (truncated) so a failed
+        # fetch can actually be diagnosed instead of guessing.
+        print(f"[blackhole] info failed for {url}: {exc}", flush=True)
+        return jsonify({"error": msg, "detail": str(exc)[:300]}), 502
     thumb = info.get("thumbnail")
     thumbs = info.get("thumbnails") or []
     if not thumb and thumbs:
