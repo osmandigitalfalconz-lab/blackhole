@@ -1,3 +1,12 @@
+# Stage 1: build the React frontend (Vite + Framer Motion)
+FROM node:20-slim AS frontend
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: Python backend + ffmpeg, serves the built frontend
 FROM python:3.12-slim
 
 # ffmpeg is needed to merge video+audio and to extract MP3
@@ -8,6 +17,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
+COPY --from=frontend /frontend/dist ./frontend/dist
 
 # PORT is set by the host (Render/Koyeb) or defaults to 7860 (Hugging Face Spaces).
 EXPOSE 7860

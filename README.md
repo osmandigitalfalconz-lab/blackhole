@@ -13,20 +13,25 @@ is stored on the server.
 
 | File | What it does |
 | --- | --- |
-| `server.py` | Flask backend: `POST /api/info` (video metadata + quality options), `GET /api/download` (streams the MP4/MP3), plus basic rate limiting and SSRF protection |
-| `static/index.html` | Downloader page: hero, link box, multiple-links mode, platform pills, how it works, FAQ |
-| `static/app.js` | Frontend logic (fetch info, render quality buttons, start downloads) |
-| `static/style.css` | Dark “black hole” theme |
+| `server.py` | Flask backend: `POST /api/info` (video metadata + quality options), `GET /api/download` (streams the MP4/MP3), plus basic rate limiting and SSRF protection. Serves the React build at `/` and the content pages at `/<page>.html` |
+| `frontend/` | React frontend (Vite + Framer Motion): downloader page — hero, link box, multiple-links mode, platform pills, how it works, FAQ. Builds to `frontend/dist`, served by Flask |
+| `static/style.css` | Dark “black hole” theme for the content pages |
 | `static/how-to.html`, `terms.html`, `privacy.html`, `disclaimer.html` | Content pages |
 | `requirements.txt` | Flask, yt-dlp, gunicorn |
-| `Dockerfile` | Container image (Python + ffmpeg) |
+| `Dockerfile` | Multi-stage container image: Node builds the React app, then Python + ffmpeg runs the server |
 
 ## Run it locally
 
+Build the React frontend once, then start the backend:
+
 ```bash
+cd frontend && npm install && npm run build && cd ..
 pip install -r requirements.txt
 python server.py        # http://127.0.0.1:5000
 ```
+
+For frontend development, `cd frontend && npm run dev` serves the React
+app on :5173 and proxies `/api` calls to the Flask backend on :5000.
 
 Or with Docker:
 

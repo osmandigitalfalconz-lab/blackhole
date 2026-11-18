@@ -31,6 +31,14 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
+# The React frontend (Vite build output). `npm run build` in frontend/
+# produces frontend/dist; Flask serves its index.html at "/" and its
+# hashed assets under /assets. The old static/ folder still serves the
+# plain content pages (how-to/terms/privacy/disclaimer) and their CSS.
+FRONTEND_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "frontend", "dist"
+)
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -384,7 +392,15 @@ def _human_size(n):
 # ---------------------------------------------------------------------------
 @app.route("/")
 def home():
-    return send_from_directory(app.static_folder, "index.html")
+    index = os.path.join(FRONTEND_DIR, "index.html")
+    if not os.path.isfile(index):
+        return jsonify({"error": "Frontend not built. Run `npm run build` in frontend/."}), 500
+    return send_from_directory(FRONTEND_DIR, "index.html")
+
+
+@app.route("/assets/<path:filename>")
+def frontend_assets(filename):
+    return send_from_directory(os.path.join(FRONTEND_DIR, "assets"), filename)
 
 
 @app.route("/<page>.html")
