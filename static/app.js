@@ -62,12 +62,23 @@ function downloadUrl(url, opt, title) {
 }
 
 function qualityButtons(url, options, title) {
-  return options.map((opt) => {
+  return options.map((opt, i) => {
     const size = opt.size_human ? `<small>${escapeHtml(opt.size_human)} · ${opt.ext.toUpperCase()}</small>` : `<small>${opt.ext.toUpperCase()}</small>`;
     const label = opt.kind === "audio" ? "🎵 MP3 audio" : `${escapeHtml(opt.label)} MP4`;
-    return `<button class="q-btn${opt.kind === "audio" ? " mp3" : ""}" data-href="${escapeHtml(downloadUrl(url, opt, title))}">${label}${size}</button>`;
+    return `<button class="q-btn${opt.kind === "audio" ? " mp3" : ""}" style="--d:${(i * 0.06).toFixed(2)}s" data-href="${escapeHtml(downloadUrl(url, opt, title))}">${label}${size}</button>`;
   }).join("");
 }
+
+/* Scroll-in: reveal sections as they enter the viewport */
+const revealObserver = new IntersectionObserver((entries) => {
+  entries.forEach((entry) => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add("in");
+      revealObserver.unobserve(entry.target);
+    }
+  });
+}, { threshold: 0.15 });
+document.querySelectorAll(".reveal").forEach((el) => revealObserver.observe(el));
 
 function renderResult(url, data) {
   resultEl.innerHTML = `

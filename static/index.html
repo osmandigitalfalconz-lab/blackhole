@@ -23,11 +23,12 @@
 
     <main>
       <section class="hero">
-        <h1>Download videos free, <span class="accent">online</span></h1>
-        <p>Pull any public video into the hole — no signup, no watermark, no app needed.</p>
+        <div class="hero-hole anim-in" aria-hidden="true"><span></span></div>
+        <h1 class="anim-in" style="--d:.08s">Download videos free, <span class="accent">online</span></h1>
+        <p class="anim-in" style="--d:.18s">Pull any public video into the hole — no signup, no watermark, no app needed.</p>
       </section>
 
-      <section class="dl-card">
+      <section class="dl-card anim-in" style="--d:.28s">
         <form id="dl-form">
           <div class="dl-row">
             <input id="url-input" type="url" placeholder="Paste a video link here — YouTube, Facebook, Instagram…" autocomplete="off" required>
@@ -47,7 +48,7 @@
         <div class="multi-result" id="multi-result"></div>
       </section>
 
-      <div class="pills">
+      <div class="pills anim-in" style="--d:.38s">
         <span class="pill"><b>YouTube</b> · videos &amp; Shorts</span>
         <span class="pill"><b>Facebook</b> · videos &amp; reels</span>
         <span class="pill"><b>Instagram</b> · reels &amp; videos</span>
@@ -60,7 +61,7 @@
         <span class="pill"><b>RedNote</b></span>
       </div>
 
-      <section class="block">
+      <section class="block reveal">
         <h2>How it works</h2>
         <div class="steps">
           <div class="step"><div class="n">1</div><h3>Copy the link</h3><p>Open the video in its app and tap Share, then Copy link.</p></div>
@@ -69,7 +70,7 @@
         </div>
       </section>
 
-      <section class="block">
+      <section class="block reveal">
         <h2>Frequently asked questions</h2>
         <details class="faq" open>
           <summary>Is BlackHole free?</summary>
