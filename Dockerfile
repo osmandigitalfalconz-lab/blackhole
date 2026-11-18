@@ -9,7 +9,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
-ENV PORT=5000
-EXPOSE 5000
-# Use $PORT (Render sets it) instead of a fixed port.
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 600 server:app"]
+# PORT is set by the host (Render/Koyeb) or defaults to 7860 (Hugging Face Spaces).
+EXPOSE 7860
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT:-7860} --workers 2 --threads 4 --timeout 600 server:app"]
