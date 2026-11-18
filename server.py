@@ -14,6 +14,7 @@ a small VPS). Docker: `docker build -t blackhole . && docker run -p 5000:5000 bl
 """
 
 import ipaddress
+import json
 import os
 import re
 import shutil
@@ -23,6 +24,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 from urllib.parse import quote, urlparse
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -110,6 +112,121 @@ def _clean_filename(name, ext):
 # ---------------------------------------------------------------------------
 # yt-dlp helpers
 # ---------------------------------------------------------------------------
+def _has_ffmpeg():
+    """True when an ffmpeg binary is available (needed for MP3 conversion
+    and for merging separate video+audio streams). Vercel's serverless
+    runtime has none, so the code falls back to combined formats and
+    native audio there; a normal host (Render/VPS) has it."""
+    if shutil.which("ffmpeg"):
+        return True
+    loc = os.environ.get("FFMPEG_LOCATION")
+    if loc and os.path.isfile(loc):
+        return True
+    try:
+        import imageio_ffmpeg
+        return os.path.isfile(imageio_ffmpeg.get_ffmpeg_exe())
+    except Exception:
+        return False
+
+
+def _ffmpeg_location():
+    """Path to an ffmpeg binary, or None."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    loc = os.environ.get("FFMPEG_LOCATION")
+    if loc and os.path.isfile(loc):
+        return loc
+    try:
+        import imageio_ffmpeg
+        path = imageio_ffmpeg.get_ffmpeg_exe()
+        if os.path.isfile(path):
+            return path
+    except Exception:
+        pass
+    return None
+
+
+def _vimeo_fallback(url):
+    """Vimeo's web client now requires a login, so yt-dlp fails. For public
+    videos the player config still lists direct progressive MP4 files —
+    fetch it and return a synthetic info dict built from those."""
+    m = re.search(r"vimeo\.com/(?:channels/[^/]+/|groups/[^/]+/videos/|album/\d+/video/|video/|)(\d+)", url)
+    if not m:
+        return None
+    vid = m.group(1)
+    req = urllib.request.Request(
+        f"https://player.vimeo.com/video/{vid}/config",
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+                 "Referer": f"https://vimeo.com/{vid}"},
+    )
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        cfg = json.loads(resp.read().decode("utf-8", "replace"))
+    files = (cfg.get("request") or {}).get("files") or {}
+    progressive = files.get("progressive") or []
+    if not progressive:
+        return None
+    video = cfg.get("video") or {}
+    thumbs = video.get("thumbs") or {}
+    thumb = thumbs.get("base") or (video.get("thumbnail") or "")
+    formats = []
+    for f in progressive:
+        h = f.get("height")
+        if not h:
+            continue
+        formats.append({
+            "format_id": f"vimeo-{h}",
+            "url": f.get("url"),
+            "height": h,
+            "width": f.get("width"),
+            "ext": "mp4",
+            "vcodec": "h264",
+            "acodec": "aac",
+            "filesize": f.get("size"),
+        })
+    if not formats:
+        return None
+    return {
+        "title": video.get("title") or f"Vimeo {vid}",
+        "uploader": (video.get("owner") or {}).get("name") or "",
+        "duration": video.get("duration"),
+        "thumbnail": thumb,
+        "extractor_key": "Vimeo",
+        "webpage_url": url,
+        "formats": formats,
+        "_no_audio": True,  # progressive files are combined; no separate audio
+    }
+
+
+def _download_vimeo_direct(url, fmt, workdir):
+    """Download a Vimeo progressive MP4 directly (no yt-dlp). Picks the
+    file matching the height in the format selector. Returns the saved
+    path, or None if it could not be resolved."""
+    info = _vimeo_fallback(url)
+    if not info:
+        return None
+    m = re.search(r"height<=?(\d+)", fmt or "")
+    want = int(m.group(1)) if m else None
+    files = sorted(info["formats"], key=lambda f: f["height"], reverse=True)
+    pick = None
+    if want:
+        at_or_below = [f for f in files if f["height"] <= want]
+        pick = at_or_below[0] if at_or_below else files[-1]
+    else:
+        pick = files[0]
+    if not pick or not pick.get("url"):
+        return None
+    req = urllib.request.Request(
+        pick["url"],
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+                 "Referer": url},
+    )
+    path = os.path.join(workdir, "file.mp4")
+    with urllib.request.urlopen(req, timeout=300) as resp, open(path, "wb") as out:
+        shutil.copyfileobj(resp, out)
+    return path if os.path.getsize(path) > 0 else None
+
+
 def fetch_info(url):
     """Return metadata + download options for a public video URL."""
     import yt_dlp
@@ -119,17 +236,26 @@ def fetch_info(url):
         "no_warnings": True,
         "noplaylist": True,
         "skip_download": True,
-        "socket_timeout": 25,
-        "retries": 2,
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
         # YouTube's web player bot-checks Vercel's datacenter IPs
-        # ("Sign in to confirm you're not a bot"), so try the Android
-        # player client first and fall back to web only if it fails.
+        # ("Sign in to confirm you're not a bot"), so try the app/TV
+        # player clients first and fall back to web only if they fail.
         "extractor_args": {
-            "youtube": {"player_client": ["android", "web"]},
+            "youtube": {"player_client": ["android", "ios", "tv_embedded", "web"]},
         },
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception:
+        # Vimeo's web client needs a login; try its player config directly.
+        if "vimeo.com" in url:
+            info = _vimeo_fallback(url)
+            if info is not None:
+                return info
+        raise
     if info is None:
         raise ValueError("Could not fetch this link.")
     if info.get("_type") == "playlist":
@@ -141,13 +267,18 @@ def fetch_info(url):
 
 
 def build_options(info):
-    """Curated download options: one best MP4 per height + one MP3."""
+    """Curated download options: one best MP4 per height + one audio.
+    When ffmpeg is available, video uses separate video+audio streams
+    merged into MP4 (best quality). Without ffmpeg (Vercel), video uses
+    the best combined format so no merge is needed, and audio is the
+    native stream (M4A/WebM) instead of a converted MP3."""
     formats = info.get("formats") or []
     heights = sorted(
         {f.get("height") for f in formats
          if f.get("vcodec") not in (None, "none") and f.get("height")},
         reverse=True,
     )
+    has_ffmpeg = _has_ffmpeg()
     options = []
     for h in heights[:6]:
         cands = [f for f in formats
@@ -159,8 +290,12 @@ def build_options(info):
                            if f.get("acodec") not in (None, "none")), None)
         best = with_audio or cands[0]
         size = best.get("filesize") or best.get("filesize_approx")
+        if has_ffmpeg:
+            fmt_id = f"bv*[height={h}]+ba/b[height<={h}]"
+        else:
+            fmt_id = f"b[height<={h}]"
         options.append({
-            "id": f"bv*[height={h}]+ba/b[height<={h}]",
+            "id": fmt_id,
             "label": f"{h}p",
             "ext": "mp4",
             "size": size,
@@ -169,22 +304,39 @@ def build_options(info):
     # Fallback: if no height-based formats were found, offer best combined.
     if not options:
         options.append({
-            "id": "bv*+ba/b",
+            "id": "bv*+ba/b" if has_ffmpeg else "b",
             "label": "Best quality",
             "ext": "mp4",
             "size": None,
             "kind": "video",
         })
-    options.append({
-        # "bestaudio" alone fails for direct files, whose only format is a
-        # combined video+audio stream — fall back to the best combined
-        # format and extract its audio.
-        "id": "bestaudio/bv*+ba/b",
-        "label": "MP3 audio",
-        "ext": "mp3",
-        "size": None,
-        "kind": "audio",
-    })
+    if not info.get("_no_audio"):
+        if has_ffmpeg:
+            options.append({
+                # "bestaudio" alone fails for direct files, whose only
+                # format is a combined stream — fall back to best combined.
+                "id": "bestaudio/bv*+ba/b",
+                "label": "MP3 audio",
+                "ext": "mp3",
+                "size": None,
+                "kind": "audio",
+            })
+        else:
+            # No ffmpeg to convert with: offer the native audio stream.
+            audio_ext = "m4a"
+            audio_only = [f for f in formats
+                          if f.get("vcodec") in (None, "none")
+                          and f.get("acodec") not in (None, "none")]
+            if audio_only:
+                audio_only.sort(key=lambda x: x.get("abr") or 0, reverse=True)
+                audio_ext = (audio_only[0].get("ext") or "m4a").lower()
+            options.append({
+                "id": "bestaudio/bv*+ba/b",
+                "label": f"Audio ({audio_ext.upper()})",
+                "ext": audio_ext,
+                "size": None,
+                "kind": "audio",
+            })
     return options
 
 
@@ -275,16 +427,33 @@ def api_download():
 
     workdir = tempfile.mkdtemp(prefix="blackhole-", dir=TMP_ROOT)
     try:
+        # Vimeo: yt-dlp's web client needs a login — download the
+        # progressive MP4 straight from the player config instead.
+        if "vimeo.com" in url and kind == "video":
+            direct = _download_vimeo_direct(url, fmt, workdir)
+            if direct:
+                return send_file(
+                    direct,
+                    mimetype="video/mp4",
+                    as_attachment=True,
+                    download_name=_clean_filename(title, "mp4"),
+                    max_age=0,
+                )
         out_tmpl = os.path.join(workdir, "file.%(ext)s")
         cmd = YTDLP_CMD + [
             "-f", fmt,
             "--no-playlist",
             "--no-warnings",
             "--no-progress",
-            "--extractor-args", "youtube:player_client=android,web",
+            "--extractor-args", "youtube:player_client=android,ios,tv_embedded,web",
             "-o", out_tmpl,
         ]
-        if kind == "audio":
+        ffloc = _ffmpeg_location()
+        if ffloc:
+            cmd += ["--ffmpeg-location", ffloc]
+        # Only convert to MP3 when ffmpeg exists; otherwise the best
+        # audio stream is downloaded as-is (M4A/WebM).
+        if kind == "audio" and _has_ffmpeg():
             cmd += ["-x", "--audio-format", "mp3"]
         else:
             cmd += ["--merge-output-format", "mp4"]
@@ -301,7 +470,13 @@ def api_download():
         path = os.path.join(workdir, files[0])
         ext = os.path.splitext(path)[1].lstrip(".") or ("mp3" if kind == "audio" else "mp4")
         filename = _clean_filename(title, ext)
-        mimetype = "audio/mpeg" if ext == "mp3" else "video/mp4"
+        mimetype = {
+            "mp3": "audio/mpeg",
+            "m4a": "audio/mp4",
+            "webm": "audio/webm" if kind == "audio" else "video/webm",
+            "opus": "audio/ogg",
+            "mp4": "video/mp4",
+        }.get(ext, "video/mp4")
         return send_file(
             path,
             mimetype=mimetype,
