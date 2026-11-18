@@ -484,6 +484,12 @@ def api_download():
             "--no-playlist",
             "--no-warnings",
             "--no-progress",
+            # Some extractors (Snapchat) report a nonsense "extension"
+            # (a random token from the URL, e.g. 'IRZXSOY') and yt-dlp
+            # otherwise refuses to save the file. Allow it: the stream
+            # is only ever written into our own throwaway temp dir and
+            # the file we serve is forced to a real .mp4/.mp3 below.
+            "--compat-options", "allow-unsafe-ext",
             "--extractor-args", "youtube:player_client=web,android,ios,tv_embedded",
             "-o", out_tmpl,
         ]
