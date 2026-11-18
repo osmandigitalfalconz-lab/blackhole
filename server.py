@@ -176,7 +176,10 @@ def build_options(info):
             "kind": "video",
         })
     options.append({
-        "id": "bestaudio",
+        # "bestaudio" alone fails for direct files, whose only format is a
+        # combined video+audio stream — fall back to the best combined
+        # format and extract its audio.
+        "id": "bestaudio/bv*+ba/b",
         "label": "MP3 audio",
         "ext": "mp3",
         "size": None,
