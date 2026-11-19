@@ -310,6 +310,18 @@ def build_options(info):
     the best combined format so no merge is needed, and audio is the
     native stream (M4A/WebM) instead of a converted MP3."""
     formats = info.get("formats") or []
+    # TikTok: the video streams yt-dlp returns for a TikTok link are the
+    # clean playback streams (PlayAddr) — they carry no watermark. The
+    # watermarked file is a separate 'download' format, which the
+    # height-based options below never pick (it has no height). Exclude
+    # it anyway as a safety net, and label TikTok quality options as
+    # no-watermark so the user can see it.
+    is_tiktok = (info.get("extractor_key") == "TikTok"
+                 or "tiktok" in (info.get("webpage_url") or ""))
+    if is_tiktok:
+        formats = [f for f in formats
+                   if f.get("format_id") != "download"
+                   and "watermarked" not in (f.get("format_note") or "")]
     heights = sorted(
         {f.get("height") for f in formats
          if f.get("vcodec") not in (None, "none") and f.get("height")},
@@ -333,7 +345,7 @@ def build_options(info):
             fmt_id = f"b[height<={h}]"
         options.append({
             "id": fmt_id,
-            "label": f"{h}p",
+            "label": f"No watermark {h}p" if is_tiktok else f"{h}p",
             "ext": "mp4",
             "size": size,
             "kind": "video",
